@@ -3,23 +3,46 @@
 .data
 
 ;----------bar's variables
-barInitX dw 130
-barInitY dw 190
-
+BarStruct struct
+	CoordX dw 130
+	CoordY dw 190
+BarStruct ends
+;bar variable
+bar BarStruct 1 dup(<>)
+;constants
 barWidth = 5
 barLength = 60
 barSpeed = 10
 ;----------ball's variables
-ballInitX dw 50
-ballInitY dw 50
-ballSpeedX dw 5
-ballSpeedY dw 5
-timeVar db 0
+BallStruct struct
+	CoordX dw 50
+	CoordY dw 50
+	SpeedX dw 5
+	SpeedY dw 5
+BallStruct ends
+;ball variable
+ball BallStruct 1 dup(<>)
+;constants
+ballSize = 5
+;----------- bricks
+NumberOfBricks = 20
+BrickStruct struct
+	CoordX dw 0
+	CoordY dw 0
+BrickStruct ends
+brickWidth = 20
+brickGap equ <10>
+brickLength = 40
+brickLoopVar dw 20
 
+brick BrickStruct    <40,20>, <80+brickGap,20>, <130+brickGap,20>, <180+brickGap,20>, <230+brickGap,20>, 
+	<40,40+brickGap>, <80+brickGap,40+brickGap>, <130+brickGap,40+brickGap>, <180+brickGap,40+brickGap>, <230+brickGap,40+brickGap>,
+	<40,70+brickGap>, <80+brickGap,70+brickGap>, <130+brickGap,70+brickGap>, <180+brickGap,70+brickGap>, <230+brickGap,70+brickGap>
+timeVar db 0
 windowsWidth = 200
 windowsLength = 320
 
-ballSize = 5
+
 
 .code
 ;------------- MACROs
@@ -53,12 +76,47 @@ main proc
 	mov ah, 0;	setting video mode
 	mov al, 13h
 	int 10h
-
+	
+	mov al, 2
+	call drawBrick
+	
 	call game
 
 mov ah, 4ch
 int 21h
 main endp
+
+;---------------------------------------------------------------------------------------------
+drawBrick proc uses ax bx cx dx si di
+	mov bh, 0; page number
+	mov si, 0
+	mov al, 1
+brickLoop_1:
+		mov cx, brick[si].CoordX ;inital x
+		mov dx, brick[si].CoordY ;inital y
+		mov brickLoopVar, 20
+		brickLoop_2:
+			mov di, brickLength
+			mov cx, brick[si].CoordX
+			brickLoop_3:
+				call drawPixel
+				inc cx
+				
+			dec di
+			cmp di, 0
+			jne brickLoop_3
+			
+			inc dx
+		dec brickLoopVar
+		cmp brickLoopVar, 0
+		jne brickLoop_2
+
+inc al
+add si, type BrickStruct
+cmp si, 60
+jb brickLoop_1
+ret
+drawBrick ENDP
 ;---------------------------------------------------------------------------------------------
 game PROC uses ax bx
 
@@ -66,7 +124,7 @@ timeLoop:
 	mov ah, 2ch	;getting the time
 	int 21h
 	
-	;if 1/100 sec hasnt passed, repeat loop
+	;if 1/100 second hasnt passed, repeat loop
 	cmp dl, timeVar
 	je timeLoop
 	
@@ -80,7 +138,7 @@ timeLoop:
 	call moveBar
 	makeBar
 	
-	;Now that 1/100 sec has passed, store the sec in time var and repeat the loop again
+	;Now that 1/100 sec has passed, store the prev second in time var and repeat the loop again
 	mov timeVar, dl
 	jmp timeLoop
 	
@@ -103,18 +161,18 @@ moveBar_Loop:
 
 	leftKey:
 		;boundaryCheckLeft
-		cmp barInitX, 0
+		cmp bar.CoordX, 0
 		jle moveBar_Loop
-		sub barInitX, barSpeed
+		sub bar.CoordX, barSpeed
 	jmp moveBar_Loop
 
 	rightKey:
 		;boundaryCheckRight
-		mov ax, barInitX
+		mov ax, bar.CoordX
 		add ax, barLength
 		cmp ax, windowsLength
 		jge moveBar_Loop
-		add barInitX, barSpeed
+		add bar.CoordX, barSpeed
 	jmp moveBar_Loop
 	
 	moveBarExit:
@@ -122,15 +180,15 @@ ret
 moveBar endp
 ;---------------------------------------------------------------------------------------------
 drawBar proc uses ax bx cx dx si di
-mov cx, barInitX ;inital x
-mov dx, barInitY ;inital y
+mov cx, bar.CoordX ;inital x
+mov dx, bar.CoordY ;inital y
 mov bh, 0; page number
 
 mov si, barWidth
 
 barLoop:
 	mov di, barLength
-	mov cx, barInitX
+	mov cx, bar.CoordX
 	barNestedLoop:
 		call drawPixel
 		inc cx
@@ -156,46 +214,46 @@ drawPixel endp
 moveBall PROC uses ax 
 	
 	;moving the ball in x-axis
-	mov ax, ballSpeedX
-	add ballInitX, ax
+	mov ax, ball.SpeedX
+	add ball.CoordX, ax
 	
 	;if hit the left wall
-	cmp ballInitX, 0
+	cmp ball.CoordX, 0
 	jle reverseSpeedX
 	
 	;if hit the right wall
-	mov ax, ballInitX
+	mov ax, ball.CoordX
 	add ax, ballSize
 	cmp ax, windowsLength
 	jge reverseSpeedX
 	
 	;moving the ball in y-axis
-	mov ax, ballSpeedY
-	add ballInitY, ax
+	mov ax, ball.SpeedY
+	add ball.CoordY, ax
 	
 	;if hit the upper wall
-	cmp ballInitY, 0
+	cmp ball.CoordY, 0
 	jle reverseSpeedY
 	
 	;if hit the lower wall
-	mov ax, ballInitY
+	mov ax, ball.CoordY
 	add ax, ballSize
 	cmp ax, windowsWidth
 	jge reverseSpeedY
 	
 	;checking ball's collision with bar
-	mov ax, ballInitY
+	mov ax, ball.CoordY
 	add ax, ballSize
-	cmp ax, barInitY
+	cmp ax, bar.CoordY
 	jl moveBallExit 
 	
 	;barX >= x && x <= barX+length
-	mov ax, ballInitX
-	cmp ax, barInitX
+	mov ax, ball.CoordX
+	cmp ax, bar.CoordX
 	jl moveBallExit
 	
 	add ax, ballSize
-	mov bx, barInitX
+	mov bx, bar.CoordX
 	add bx, barLength
 	cmp ax, bx
 	jl reverseSpeedY
@@ -203,25 +261,27 @@ moveBall PROC uses ax
 	moveBallExit:
 	ret 
 	reverseSpeedY:
-	neg ballSpeedY
+	neg ball.SpeedY
 	ret
 	
 	reverseSpeedX:
-	neg ballSpeedX
+	neg ball.SpeedX
 	ret
 	
 moveBall endp
 ;---------------------------------------------------------------------------------------------
+
+;---------------------------------------------------------------------------------------------
 drawBall proc uses ax bx cx dx si di
-	mov cx, ballInitX ;inital x
-	mov dx, ballInitY ;inital y
+	mov cx, ball.CoordX ;inital x
+	mov dx, ball.CoordY ;inital y
 	mov bh, 0; page number
 
 	mov si, ballSize
 
 	ballLoop:
 		mov di, ballSize
-		mov cx, ballInitX
+		mov cx, ball.CoordX
 		ballNestedLoop:
 			call drawPixel
 			inc cx
