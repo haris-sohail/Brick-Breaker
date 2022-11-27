@@ -6,13 +6,13 @@
 BarStruct struct
 	CoordX dw 130
 	CoordY dw 190
+	Length_ dw 60
+	Width_ dw 5
+	Speed dw 10
 BarStruct ends
 ;bar variable
 bar BarStruct 1 dup(<>)
-;constants
-barWidth = 5
-barLength = 60
-barSpeed = 5
+
 ;----------ball's variables
 BallStruct struct
 	CoordX dw 158
@@ -56,6 +56,7 @@ nameStr_1 db "Player Name: ", '$'
 nameStr_2 db "Name: ",'$'
 LivesStr db "Lives: ",'$'
 levelStr db "Level: ", '$'
+gameLevel dw 1
 timeRemaining dw 0
 timeVar_1 db 0
 timeVar_2 db 0
@@ -94,7 +95,7 @@ count dw 0
 		int 10h
 	ENDM
 	
-	addBrokenBrick MACRO si
+	addBrokenBrick MACRO
 		mov di, -1
 		brokenBrickLoop:
 			inc di
@@ -180,7 +181,11 @@ timeLoop:
 	mov ah, 2ch	;getting the time
 	int 21h
 	
+	;updating game time
 	updateTime
+	
+	;updating game level
+	;call updateLevel
 
 	;if 1/100 second hasnt passed, repeat loop
 	cmp dl, timeVar_1
@@ -214,6 +219,23 @@ timeLoop:
 ret
 game endp
 ;---------------------------------------------------
+updateLevel Proc uses si
+	;checking if the broken bricks array is completely filled
+		;mov si, 0
+		;levelLoop:
+		;	cmp brokenBricks[si], -1
+		;	je updateLevelExit 			;still has space left in it
+		;inc si
+		;cmp si, 15
+		;jne  levelLoop
+	;else 
+		;inc	gameLevel
+		;sub bar.Length_, 10
+		;add bar.Speed, 10
+		;updateLevelExit:
+	
+ret
+updateLevel endp
 ;--------------------------------------------------
 inputName proc uses ax bx cx dx
 
@@ -341,6 +363,16 @@ loop displayHearts
 	mov ah, 09h
 	int 21h
 	
+	mov ah, 02h
+	mov bh, 0
+	mov dh, 24
+	mov dl, 38
+	int 10h
+	
+	mov ax, gameLevel
+	mov statsVar, ax
+	call updateStats
+
 	;------------ 
 	
 ret
@@ -384,13 +416,15 @@ moveBar_Loop:
 		;boundaryCheckLeft
 		cmp bar.CoordX, 0
 		jle moveBar_Loop
-		sub bar.CoordX, barSpeed
+		mov ax, bar.Speed
+		sub bar.CoordX, ax
 		
 		
 		cmp isBallLaunched, 0
 		jne moveBar_Loop
 		clearBall
-		sub ball.CoordX, barSpeed
+		mov ax, bar.Speed
+		sub ball.CoordX, ax
 		
 	jmp moveBar_Loop
 	
@@ -398,15 +432,17 @@ moveBar_Loop:
 	rightKey:
 		;boundaryCheckRight
 		mov ax, bar.CoordX
-		add ax, barLength
+		add ax, bar.Length_
 		cmp ax, windowsLength
 		jge moveBar_Loop
-		add bar.CoordX, barSpeed
+		mov ax, bar.Speed
+		add bar.CoordX, ax
 		
 		cmp isBallLaunched, 0
 		jne moveBar_Loop
 		clearBall
-		add ball.CoordX, barSpeed
+		mov ax, bar.Speed
+		add ball.CoordX, ax
 		
 	jmp moveBar_Loop
 	
@@ -419,10 +455,10 @@ mov cx, bar.CoordX ;inital x
 mov dx, bar.CoordY ;inital y
 mov bh, 0; page number
 
-mov si, barWidth
+mov si, bar.Width_
 
 barLoop:
-	mov di, barLength
+	mov di, bar.Length_
 	mov cx, bar.CoordX
 	barNestedLoop:
 		call drawPixel
@@ -494,7 +530,7 @@ moveBall PROC uses ax
 	
 	add ax, ballSize
 	mov bx, bar.CoordX
-	add bx, barLength
+	add bx, bar.Length_
 	cmp ax, bx
 	jl reverseSpeedY
 	
@@ -596,6 +632,7 @@ collisionLoop:
 	je collisionExit ; if the pixel is already black, skip the clearing
 	
 	mov ax, si
+	mov di, 0
 	checkForBrokenBrick:
 		cmp brokenBricks[di], ax  ; if its already inside the broken bricks array, skip over it
 		je collisionExit
@@ -603,7 +640,7 @@ collisionLoop:
 	cmp di, 15
 	jne checkForBrokenBrick
 		
-	addBrokenBrick si ; ax = si	(else add it to the array list)
+	addBrokenBrick ; ax = si	(else add it to the array list)
 	clearBrick si
 	inc player.Score
 	;---------reflection off of a brick
