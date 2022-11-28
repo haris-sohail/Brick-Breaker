@@ -78,6 +78,16 @@ count dw 0
 		mov al, 00h; black colour ball
 		call drawBall
 	ENDM
+	
+	attachBallToBar MACRO
+		mov ax, bar.CoordX
+		mov ball.CoordX, ax
+		add ball.CoordX, 28
+		mov ax, bar.CoordY
+		sub ax, 10
+		mov ball.CoordY, ax
+		mov isBallLaunched, 0
+	ENDM
 
 	makeBar MACRO
 		mov al, 0fh; white colour bar
@@ -393,11 +403,11 @@ clearHearts endp
 moveBar PROC uses ax bx cx dx
 moveBar_Loop:
 
-	mov ah, 01;taking input
+	mov ah, 01;checking for button input
 	int 16h
 	jz moveBarExit
 
-	mov ah, 00;taking input
+	mov ah, 00;saving the pressed button
 	int 16h
 	cmp ah, 4Bh; left key
 	je leftKey
@@ -419,7 +429,7 @@ moveBar_Loop:
 		mov ax, bar.Speed
 		sub bar.CoordX, ax
 		
-		
+		;move the ball along the bar if its not launched
 		cmp isBallLaunched, 0
 		jne moveBar_Loop
 		clearBall
@@ -438,6 +448,7 @@ moveBar_Loop:
 		mov ax, bar.Speed
 		add bar.CoordX, ax
 		
+		;move the ball along the bar if its not launched
 		cmp isBallLaunched, 0
 		jne moveBar_Loop
 		clearBall
@@ -549,7 +560,9 @@ moveBall PROC uses ax
 	
 	youDied:
 	dec player.Lives
-	neg ball.SpeedY
+	;neg ball.SpeedY
+	
+	attachBallToBar
 	ret
 	
 	
@@ -596,29 +609,29 @@ brickCollision proc uses ax bx cx dx di si
 	mov si, -4
 	mov di, 0
 collisionLoop:
-	add si, 4
+	add si, type BrickStruct
 	cmp si, 60
 	jg collisionExit
 	
 	mov ax, brick[si].CoordX
 	add ax, brickLength
 	cmp ball.CoordX, ax
-	jg collisionLoop
+	jge collisionLoop
 	
 	mov ax, ball.CoordX
 	add ax, ballSize
 	cmp ax, brick[si].CoordX
-	jl collisionLoop
+	jle collisionLoop
 	
 	mov ax, brick[si].CoordY
 	add ax, brickWidth
 	cmp ball.CoordY, ax
-	jg collisionLoop
+	jge collisionLoop
 	
 	mov ax, ball.CoordY
 	add ax, ballSize
 	cmp ax, brick[si].CoordY
-	jl collisionLoop
+	jle collisionLoop
 	
 	;if all above 4 conditions are passed, it means the ball has collided
 	;checking if the block has already been cleared
