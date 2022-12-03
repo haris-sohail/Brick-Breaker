@@ -1,5 +1,6 @@
 .model small
 .stack 100h
+
 .data
 
 ;----------bar's variables
@@ -8,15 +9,15 @@ BarStruct struct
 	CoordY dw 190
 	Length_ dw 60
 	Width_ dw 5
-	Speed dw 10
+	Speed dw 20
 BarStruct ends
 ;bar variable
 bar BarStruct 1 dup(<>)
 
 ;----------ball's variables
 BallStruct struct
-	CoordX dw 158
-	CoordY dw 180
+	CoordX dw 0
+	CoordY dw 0
 	SpeedX dw 5
 	SpeedY dw 5
 BallStruct ends
@@ -26,21 +27,18 @@ isBallLaunched db 0
 ;constants
 ballSize = 5
 ;----------- bricks
-NumberOfBricks = 20
 BrickStruct struct
 	CoordX dw 0
 	CoordY dw 0
+	Health dw 1
 BrickStruct ends
 brickWidth = 20
-brickGap equ <10> 
 brickLength = 40
-brickLoopVar dw 20
-
-brick BrickStruct    <40,20>, <80+brickGap,20>, <130+brickGap,20>, <180+brickGap,20>, <230+brickGap,20>, 
-	<40,40+brickGap>, <80+brickGap,40+brickGap>, <130+brickGap,40+brickGap>, <180+brickGap,40+brickGap>, <230+brickGap,40+brickGap>,
-	<40,70+brickGap>, <80+brickGap,70+brickGap>, <130+brickGap,70+brickGap>, <180+brickGap,70+brickGap>, <230+brickGap,70+brickGap>
-	
-brokenBricks dw 15 dup(-1)
+bricksCount dw 0
+brick BrickStruct    <40,20>, <90,20>, <140,20>, <190,20>, <240,20>, 
+					 <40,50>, <90,50>, <140,50>, <190,50>, <240,50>,
+					 <40,80>, <90,80>, <140,80>, <190,80>, <240,80>
+						
 ;------------ player
 PlayerStruct struct
 	Score dw 0
@@ -51,11 +49,13 @@ PlayerStruct ends
 player PlayerStruct <>
 
 ;------------ misc vars
-scoreStr db "Score: ",'$'
-nameStr_1 db "Player Name: ", '$'
-nameStr_2 db "Name: ",'$'
-LivesStr db "Lives: ",'$'
-levelStr db "Level: ", '$'
+scoreMsg db "Score: ",'$'
+nameMsg_1 db "Player Name: ", '$'
+nameMsg_2 db "Name: ",'$'
+livesMsg db "Lives: ",'$'
+levelMsg db "Level: ", '$'
+pauseMsg db "Game is paused.", 10,9, "  Press esc to resume.", '$' ;10 for linefeed, 9 for tab
+
 gameLevel dw 1
 timeRemaining dw 0
 timeVar_1 db 0
@@ -64,10 +64,10 @@ windowsWidth = 200
 windowsLength = 320
 statsVar dw 0
 count dw 0
-
-
+isGamePaused dw 0
 
 .code
+;include img.inc
 ;------------- MACROs
 	makeBall MACRO
 		mov al, 0fh; white colour ball
@@ -79,14 +79,30 @@ count dw 0
 		call drawBall
 	ENDM
 	
+	beepSound MACRO
+		mov ah, 2h
+		mov dl, 07h
+		int 21h
+	ENDM
+	
 	attachBallToBar MACRO
+	clearBall
 		mov ax, bar.CoordX
 		mov ball.CoordX, ax
-		add ball.CoordX, 28
+		mov bx, bar.Length_; 	getting the midpoint of the paddle
+		shr bx, 1
+		add ball.CoordX, bx
 		mov ax, bar.CoordY
 		sub ax, 10
 		mov ball.CoordY, ax
 		mov isBallLaunched, 0
+		
+		
+		or ball.SpeedY,0
+		js directionSkip1
+		neg ball.SpeedY
+		directionSkip1:
+		
 	ENDM
 
 	makeBar MACRO
@@ -139,6 +155,19 @@ count dw 0
 		jne clearBrickLoop_2
 	ENDM
 	
+	displayPauseMsg MACRO
+		;-setting the cursor position
+		mov ah, 02h
+		mov bh, 0
+		mov dh, 18	;row
+		mov dl, 13	;col
+		int 10h
+		
+		mov dx, offset pauseMsg
+		mov ah, 09h
+		int 21h
+	ENDM
+	
 	updateTime MACRO
 		;----------- 4 mins of game time
 		;if
@@ -158,7 +187,7 @@ count dw 0
 		mov statsVar, ax
 		call updateStats
 		;---
-		cmp timeRemaining, 240
+		cmp timeRemaining, 1000
 		je exitGame
 		
 		timeSkip:
@@ -175,8 +204,7 @@ main proc
 	setVideoMode
 	
 	call inputName
-	call drawBrick
-	
+	call drawBricks
 	call game
 
 mov ah, 4ch
@@ -187,24 +215,24 @@ main endp
 ;---------------------------------------------------------------------------------------------
 game PROC uses ax bx cx dx si di
 
-timeLoop:
-	mov ah, 2ch	;getting the time
+	attachBallToBar
+	
+gameLoop:
+	mov ah, 2ch	;getting system time
 	int 21h
 	
 	;updating game time
-	updateTime
-	
-	;updating game level
-	;call updateLevel
+	.if(isGamePaused == 0)
+		updateTime
+		call updateGameLevel
+	.endif
 
 	;if 1/100 second hasnt passed, repeat loop
 	cmp dl, timeVar_1
-	je timeLoop
+	je gameLoop
 	
 	;displaying the score
 	call displayStats
-	
-	call brickCollision
 	
 	;moving the ball
 	clearBall
@@ -216,36 +244,58 @@ timeLoop:
 	
 	;moving the bar
 	clearBar
-	call moveBar
+	call keyboardInput
 	makeBar
 	
-	
-	
+
 	;Now that 1/100 sec has passed, store the prev second in time var and repeat the loop again
 	mov timeVar_1, dl
-	jmp timeLoop
+	jmp gameLoop
 	
 	exitGame:
 ret
 game endp
 ;---------------------------------------------------
-updateLevel Proc uses si
-	;checking if the broken bricks array is completely filled
-		;mov si, 0
-		;levelLoop:
-		;	cmp brokenBricks[si], -1
-		;	je updateLevelExit 			;still has space left in it
-		;inc si
-		;cmp si, 15
-		;jne  levelLoop
-	;else 
-		;inc	gameLevel
-		;sub bar.Length_, 10
-		;add bar.Speed, 10
-		;updateLevelExit:
-	
+updateGameLevel Proc uses si ax
+	.if(bricksCount == 15) 
+		inc	gameLevel
+		mov bricksCount, 0
+		
+		; Condition for game level 2
+		.if(gameLevel == 2)
+			sub bar.Length_, 20
+			;add ball.SpeedX, 3
+			add ball.SpeedY, 3
+			mov si, 0
+			.while(si < (BrickStruct * 15))
+				mov brick[si].Health, 2
+			add si, type BrickStruct
+			.endw
+			
+		; Conditions for game level 3
+		.else 
+			add ball.SpeedX, 3
+			;add ball.SpeedY, 3
+			mov si, 0
+			.while(si < (BrickStruct * 15))
+				mov brick[si].Health, 3
+			add si, type BrickStruct
+			.endw
+		.endif
+		
+		; reverting the bricks to their original coordinates and displaying them
+		attachBallToBar
+		mov si, 0
+		.while(si < BrickStruct * 15)
+			neg brick[si].CoordX
+			neg brick[si].CoordY
+		add si, type BrickStruct
+		.endw
+		call drawBricks
+		
+	.endif
 ret
-updateLevel endp
+updateGameLevel endp
 ;--------------------------------------------------
 inputName proc uses ax bx cx dx
 
@@ -256,7 +306,7 @@ inputName proc uses ax bx cx dx
 	mov dl, 8
 	int 10h
 	
-	mov dx, offset nameStr_1
+	mov dx, offset nameMsg_1
 	mov ah, 09h
 	int 21h
 
@@ -292,7 +342,7 @@ displayStats proc uses ax bx dx
 	mov dl, 1
 	int 10h
 	
-	mov dx, offset scoreStr
+	mov dx, offset scoreMsg
 	mov ah, 09h
 	int 21h
 	
@@ -314,7 +364,7 @@ displayStats proc uses ax bx dx
 	mov dl, 25
 	int 10h
 	
-	mov dx, offset nameStr_2
+	mov dx, offset nameMsg_2
 	mov ah, 09h
 	int 21h
 	
@@ -331,13 +381,13 @@ displayStats proc uses ax bx dx
 	;------------ Lives
 	call clearHearts
 	
-	mov ah, 02h
+	mov ah, 02h ;changing cursor position
 	mov bh, 0
 	mov dh, 24
 	mov dl, 1
 	int 10h
 	
-	mov dx, offset LivesStr
+	mov dx, offset livesMsg
 	mov ah, 09h
 	int 21h
 	
@@ -362,14 +412,14 @@ displayHearts:
 	int 21h
 loop displayHearts
 	
-	;------------- levelStr
+	;------------- levelMsg
 	mov ah, 02h
 	mov bh, 0
 	mov dh, 24
-	mov dl, 32
+	mov dl, 30
 	int 10h
 	
-	mov dx, offset levelStr
+	mov dx, offset levelMsg
 	mov ah, 09h
 	int 21h
 	
@@ -388,6 +438,30 @@ loop displayHearts
 ret
 displayStats endp
 ;-------------------
+clearPausedMsg Proc uses ax bx cx dx
+	local parentLoopCount:word, childLoopCount: word
+	mov parentLoopCount, 25
+	mov childLoopCount, 160
+	mov cx, 80 ;x coord
+	mov dx, 140 ;y- coord
+	
+	.while(parentLoopCount>0)
+		mov cx, 80
+		mov childLoopCount, 160
+		.while(childLoopCount>0)
+		mov ah, 0ch	;write pixel
+		mov al, 0	;black color
+		mov bh, 0
+		int 10h
+		inc cx
+		dec childLoopCount
+		.endw
+	inc dx
+	dec parentLoopCount
+	.endw
+ret
+clearPausedMsg endp
+;-------------------
 clearHearts Proc uses ax bx cx dx
 	mov ah, 06h
 	mov bh, 0 ; black colour
@@ -399,13 +473,23 @@ clearHearts Proc uses ax bx cx dx
 	int 10h
 ret
 clearHearts endp
+clearScreen proc uses ax bx cx dx
+	MOV AH, 06h
+	MOV AL, 0
+	MOV CX, 0
+	MOV DH, 25
+	MOV DL, 40
+	MOV BH, 0
+	INT 10h
+ret
+clearScreen endp
 ;---------------------------------------------------------------------------------------------
-moveBar PROC uses ax bx cx dx
-moveBar_Loop:
+keyboardInput PROC uses ax bx cx dx
+keyboardInput_Loop:
 
 	mov ah, 01;checking for button input
 	int 16h
-	jz moveBarExit
+	jz keyboardInputExit
 
 	mov ah, 00;saving the pressed button
 	int 16h
@@ -415,51 +499,81 @@ moveBar_Loop:
 	je rightKey
 	cmp ah, 57 ;space key
 	je launchBall
-	jmp moveBarExit
+	cmp ah, 01
+	je pauseGame
+	jmp keyboardInputExit
+	
 	
 	launchBall:
+	;if game is paused
+		.if(isGamePaused == 1)
+		jmp keyboardInputExit
+		.endif
+	;else
 	mov isBallLaunched, 1
-	jmp moveBarExit
+	jmp keyboardInputExit
+	
+	pauseGame:
+	.if(isGamePaused == 0)
+	displayPauseMsg
+	mov isGamePaused, 1
+	mov isBallLaunched,  0
+	.else
+	call clearPausedMsg
+	mov isGamePaused, 0
+	mov isBallLaunched,  1
+	.endif
+	jmp keyboardInputExit
+
 
 	leftKey:
+		;if game is paused
+		.if(isGamePaused == 1)
+		jmp keyboardInputExit
+		.endif
 	
 		;boundaryCheckLeft
 		cmp bar.CoordX, 0
-		jle moveBar_Loop
+		jle keyboardInput_Loop
 		mov ax, bar.Speed
 		sub bar.CoordX, ax
 		
 		;move the ball along the bar if its not launched
 		cmp isBallLaunched, 0
-		jne moveBar_Loop
+		jne keyboardInput_Loop
 		clearBall
 		mov ax, bar.Speed
 		sub ball.CoordX, ax
 		
-	jmp moveBar_Loop
+	jmp keyboardInput_Loop
 	
 
 	rightKey:
+		;if game is paused
+		.if(isGamePaused == 1)
+		jmp keyboardInputExit
+		.endif
+	
 		;boundaryCheckRight
 		mov ax, bar.CoordX
 		add ax, bar.Length_
 		cmp ax, windowsLength
-		jge moveBar_Loop
+		jge keyboardInput_Loop
 		mov ax, bar.Speed
 		add bar.CoordX, ax
 		
 		;move the ball along the bar if its not launched
 		cmp isBallLaunched, 0
-		jne moveBar_Loop
+		jne keyboardInput_Loop
 		clearBall
 		mov ax, bar.Speed
 		add ball.CoordX, ax
 		
-	jmp moveBar_Loop
+	jmp keyboardInput_Loop
 	
-	moveBarExit:
+	keyboardInputExit:
 ret
-moveBar endp
+keyboardInput endp
 ;---------------------------------------------------------------------------------------------
 drawBar proc uses ax bx cx dx si di
 mov cx, bar.CoordX ;inital x
@@ -497,12 +611,13 @@ moveBall PROC uses ax
 	cmp isBallLaunched, 0
 	je moveBallExit
 	
-	call brickCollision
-	
 	;moving the ball in x-axis
 	mov ax, ball.SpeedX
 	add ball.CoordX, ax
 	
+		;moving the ball in y-axis
+	mov ax, ball.SpeedY
+	add ball.CoordY, ax
 	
 	;if hit the left wall
 	cmp ball.CoordX, 0
@@ -514,9 +629,7 @@ moveBall PROC uses ax
 	cmp ax, windowsLength
 	jge reverseSpeedX
 	
-	;moving the ball in y-axis
-	mov ax, ball.SpeedY
-	add ball.CoordY, ax
+
 	
 	;if hit the upper wall
 	cmp ball.CoordY, 0
@@ -529,23 +642,32 @@ moveBall PROC uses ax
 	jge youDied
 	
 	;checking ball's collision with bar
-	mov ax, ball.CoordY
-	add ax, ballSize
-	cmp ax, bar.CoordY
-	jl moveBallExit 
 	
-	;barX >= x && x <= barX+length
+	
+	
+	mov ax, bar.CoordX
+	add ax, bar.Length_
+	cmp ball.CoordX, ax
+	jg moveBallExit
+	
 	mov ax, ball.CoordX
+	add ax, ballSize
 	cmp ax, bar.CoordX
 	jl moveBallExit
 	
-	add ax, ballSize
-	mov bx, bar.CoordX
-	add bx, bar.Length_
-	cmp ax, bx
-	jl reverseSpeedY
+	mov ax, bar.CoordY
+	add ax, bar.Width_
+	cmp ball.CoordY, ax
+	jg moveBallExit
 	
-	;if not collision occurs, simply return
+	mov ax, ball.CoordY
+	add ax, ballSize
+	cmp ax, bar.CoordY
+	jl moveBallExit
+	; if collides, reverseSpeedY
+	jmp reverseSpeedY
+	
+	;if no collision occurs, simply return
 	moveBallExit:
 	ret 
 	
@@ -560,19 +682,29 @@ moveBall PROC uses ax
 	
 	youDied:
 	dec player.Lives
-	;neg ball.SpeedY
-	
+	;neg ball.SpeedYs
 	attachBallToBar
 	ret
 	
 	
 moveBall endp
 ;---------------------------------------------------------------------------------------------
-drawBrick proc uses ax bx cx dx si di
+drawBricks proc uses ax bx cx dx si di
+	local brickLoopVar:word, colorTracker:word
+	mov colorTracker, 0
+	mov brickLoopVar, 20
 	mov bh, 0; page number
 	mov si, 0
-	mov al, 1
+	mov al, 9
 brickLoop_1:
+	.if(colorTracker == 4)
+		mov colorTracker, 0
+		mov al, 9
+	.else
+		inc colorTracker
+		inc al
+	.endif
+	
 		mov cx, brick[si].CoordX ;inital x
 		mov dx, brick[si].CoordY ;inital y
 		mov brickLoopVar, 20
@@ -592,12 +724,11 @@ brickLoop_1:
 		cmp brickLoopVar, 0
 		jne brickLoop_2
 
-inc al
 add si, type BrickStruct
-cmp si, 60
+cmp si, type BrickStruct * 15
 jb brickLoop_1
 ret
-drawBrick ENDP
+drawBricks ENDP
 
 ;---------------------------------------------------------------------------------------------
 brickCollision proc uses ax bx cx dx di si
@@ -605,61 +736,59 @@ brickCollision proc uses ax bx cx dx di si
 	; ball.x + ballLength > brick.x
 	; ball.y < brick.y +brickWidth
 	; ball.y + ballWidth > brick.y 
+	local collisionVar:word, brickLoopVar:word
 	
-	mov si, -4
+	mov si, 0
 	mov di, 0
-collisionLoop:
-	add si, type BrickStruct
-	cmp si, 60
-	jg collisionExit
+	mov collisionVar, 0
+	.while(collisionVar < 15)
 	
 	mov ax, brick[si].CoordX
 	add ax, brickLength
 	cmp ball.CoordX, ax
-	jge collisionLoop
+	jg collisionSkip
 	
 	mov ax, ball.CoordX
 	add ax, ballSize
 	cmp ax, brick[si].CoordX
-	jle collisionLoop
+	jl collisionSkip
 	
 	mov ax, brick[si].CoordY
 	add ax, brickWidth
 	cmp ball.CoordY, ax
-	jge collisionLoop
+	jg collisionSkip
 	
 	mov ax, ball.CoordY
 	add ax, ballSize
 	cmp ax, brick[si].CoordY
-	jle collisionLoop
+	jl collisionSkip
 	
 	;if all above 4 conditions are passed, it means the ball has collided
 	;checking if the block has already been cleared
-	mov al, 1
-	mov ah, 0dh
-	mov bh, 0
-	mov cx, brick[si].CoordX
-	mov dx, brick[si].CoordY
-	int 10h
-	cmp al, 0; 0 for black colour
-	je collisionExit ; if the pixel is already black, skip the clearing
 	
-	mov ax, si
-	mov di, 0
-	checkForBrokenBrick:
-		cmp brokenBricks[di], ax  ; if its already inside the broken bricks array, skip over it
-		je collisionExit
-	inc di
-	cmp di, 15
-	jne checkForBrokenBrick
+	dec brick[si].Health
+	.if(brick[si].Health == 0)
+		clearBrick si
+		inc bricksCount
 		
-	addBrokenBrick ; ax = si	(else add it to the array list)
-	clearBrick si
+		;changing the bricks coordinates so the ball wont collide with them once they've been broken
+		neg brick[si].CoordX
+		neg brick[si].CoordY
+	.endif
+	
+	;generating beepsound
+	beepSound
+	; increasing the player score
 	inc player.Score
 	;---------reflection off of a brick
 	neg ball.SpeedY
+	ret
 	
-	collisionExit:
+	collisionSkip:
+add si, type BrickStruct
+inc collisionVar
+.endw
+
 ret
 brickCollision endp
 ;---------------------------------------------------------------------------------------------
