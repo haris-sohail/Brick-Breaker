@@ -5,13 +5,27 @@
 
 ; ----- Main menu variables
 
-text_main_menu db "BRICK BREAKER GAME", '$'
-text_new_game db "NEW GAME", '$'
-text_resume_game db "RESUME GAME", '$'
-text_instructions db "INSTRUCTIONS", '$'
-text_highscore db "HIGH SCORE", '$'
-text_exit db "EXIT", '$'
+filename db '1MM.bmp', 0
 
+filename_main_menu      db '1MM.bmp', 0
+                        db '2MM.bmp', 0
+                        db '3MM.bmp', 0
+                        db '4MM.bmp', 0
+                        db '5MM.bmp', 0
+
+picCounter dw 0
+
+eight db 8
+
+handle_file dw ?
+
+bmp_header db 54 dup (0) ; Contains 54 bytes of data
+
+color_palette db 256*4 dup (0) ; Contains 256 bytes of color each value of color is 4 bytes 
+
+Output_lines db 320 dup (0) ; Our Windows contains 320 rows 
+
+error_prompt db 'Error', 13, 10,'$'
 
 
 ;----------bar's variables
@@ -66,8 +80,8 @@ main proc
     mov al, 13h
     int 10h
 
-    ;call game
     call main_menu
+    call game
 
 mov ah, 4ch
 int 21h
@@ -253,23 +267,157 @@ drawBall endp
 ;----------------------------------------------------
 main_menu proc
 
+showPic:
     call clear_screen
 
-    ; show the brick breaker game title
+    ; show picture 
 
-    mov ah,02h       ;cursor position
-    mov bh,00h       ;page number
-    mov dh,04h       ;row 
-    mov dl,04h       ;column
-    int 10h                          
+    ; Graphic mode
+    mov ax, 13h
+    int 10h
+
+    ; Process BMP file
+    mov dx, offset filename
+    call Open_File
+    call Get_Header
+    call Get_Palette
+    call Copy_Pallete
+    call Copy_Bitmap_Img
+
+    ; setting zero flag to 1
+    mov ax, 1
+    mov bx, 1
+    cmp bx, ax
+
+    ; waiting for a key press
+    mov ah, 0
+    int 16h
+
+    ; if any key is not pressed
+    jz keyPressed
+   
+    jmp showPic
+
+keyPressed:
+
+    ; if a key if pressed check which key is pressed
+
+    ; if down key is pressed
+
+    cmp ah, 50H
+
+    jne checkUp ; if down key is not pressed check if up key is pressed
+
+    ; else if down key is pressed
+
+    ; increment the picCounter if it is not at high extreme i.e. 5
+
+    cmp picCounter, 5
+
+    jb nextPic ; change picture by changing the filename
+
+    jmp showPic
+
+    nextPic:
+
+        ; ------ push the source string
+
+        mov bx, offset filename_main_menu 
         
-    mov ah,09h                       
-    mov dx, offset text_main_menu      
-    int 21h                          
+        mov ax, picCounter
+
+        mul eight
+
+        add bx, ax
+
+        push bx
+
+        ; ------ push the destination string
+
+        mov bx, offset filename 
+        push bx
+
+        call copyString
+
+        inc picCounter
+
+    jmp showPic ; now show the picture     
+
+    checkUp:
+
+    ; if up key is pressed
+
+    cmp ah, 48H
+
+    jne showPic
+
+    ; decrement the picCounter if it is not at low extreme i.e. 1
+
+    cmp picCounter, 0
+
+    ja prevPic ; change picture by changing the filename
+
+    jmp showPic
+
+    prevPic:
+
+        dec picCounter
+
+        ; ------ push the source string
+
+        mov bx, offset filename_main_menu 
+        
+        mov ax, picCounter
+
+        mul eight
+
+        add bx, ax
+
+        push bx
+
+        ; ------ push the destination string
+
+        mov bx, offset filename 
+        push bx
+
+        call copyString
+
+    jmp showPic ; now show the picture
+
+    call clear_screen
+    ret                         
 
 main_menu endp
 
 ;----------------------------------------------------
+
+copyString proc
+    
+    pop si 
+
+    pop bx ; destination
+
+    pop di ; source
+
+    mov cx, 8 ; length of source
+
+    ; copies destination to source string
+    ; uses indirect addressing
+
+    L1: 
+        mov al, [di]
+        mov [bx], al
+
+        inc bx
+        inc di
+    Loop L1
+
+    push si
+    ret
+
+copyString endp
+
+; ----------------------------------------------------
 
 clear_screen proc
 
@@ -284,6 +432,149 @@ clear_screen proc
             
     ret
 clear_screen endp
+
+; ------------------------------------------
+
+Open_File proc
+    ; Open file
+    mov ah, 3Dh
+    xor al, al
+    int 21h
+    jc cant_open
+    mov [handle_file], ax
+    ret
+    cant_open:
+    mov dx, offset error_prompt
+    mov ah, 9h
+    int 21h
+    ret
+Open_File endp
+
+Get_Header proc
+    ; Read BMP file bmp_header, 54 bytes
+    mov ah,3fh
+    mov bx, [handle_file]
+    mov cx,54
+    mov dx,offset bmp_header
+    int 21h
+    ret
+Get_Header endp
+
+Get_Palette proc
+    ; Read BMP file color color_palette, 256 colors * 4 bytes (400h)
+    mov ah,3fh
+    mov cx,400h
+    mov dx,offset color_palette
+    int 21h
+    ret
+Get_Palette endp
+
+Copy_Pallete proc
+    ; Copy the colors color_palette to the video memory
+    ; The number of the first color should be sent to port 3C8h
+    ; The color_palette is sent to port 3C9h
+    
+    mov si,offset color_palette
+    mov cx,256
+    mov dx,3C8h
+    mov al,0
+
+    ; Copy starting color to port 3C8h
+
+    out dx,al
+
+    ; Copy color_palette itself to port 3C9h
+
+    inc dx
+    Get_Pal:
+
+    ; Note: Colors in a BMP file are saved as BGR values rather than RGB.
+
+    mov al,[si+2] ; Get red value.
+    shr al,1
+    shr al,1     ; Max. is 255, but video color_palette maximal
+
+    ; value is 63. Therefore dividing by 4.
+
+    out dx,al ; Send it.
+    mov al,[si+1] ; Get green value.
+    shr al,1
+    shr al,1    
+    out dx,al ; Send it.
+    mov al,[si] ; Get blue value.
+    shr al,1
+    shr al,1    
+    out dx,al ; Send it.
+    add si,4 ; Point to next color.
+
+    ; (There is a null chr. after every color.)
+
+    loop Get_Pal
+    ret
+ Copy_Pallete endp
+
+ Copy_Bitmap_Img proc
+
+    ; BMP graphics are saved upside-down.
+    ; Read the graphic line by line (200 lines in VGA format),
+    ; displaying the lines from bottom to top.
+
+    mov ax, 0A000h
+    mov es, ax
+    mov cx,200
+    PrintBMPLoop:
+    push cx
+
+    ; di = cx*320, point to the correct screen line
+
+    mov di,cx
+    shl cx,1
+    shl cx,1
+    shl cx,1
+    shl cx,1
+    shl cx,1
+    shl cx,1
+
+    shl di,1
+    shl di,1
+    shl di,1
+    shl di,1
+    shl di,1
+    shl di,1
+    shl di,1
+    shl di,1
+
+    add di,cx
+
+    ; Read one line
+
+    mov ah,3fh
+    mov cx,320
+    mov dx,offset Output_lines
+    int 21h
+
+    ; Copy one line into video memory
+
+    cld 
+
+    ; Clear direction flag, for movsb
+
+    mov cx,320
+    mov si,offset Output_lines
+    rep movsb 
+
+    ; Copy line to the screen
+    ;rep movsb is same as the following code:
+    ;mov es:di, ds:si
+    ;inc si
+    ;inc di
+    ;dec cx
+    ;loop until cx=0
+
+    pop cx
+    loop PrintBMPLoop
+    ret
+ Copy_Bitmap_Img endp
 
 
 end
