@@ -2,6 +2,33 @@
 .stack 100h
 
 .data
+;================================
+filename db '1MM.bmp', 0
+
+filename_main_menu      db '1MM.bmp', 0
+                        db '2MM.bmp', 0
+                        db '3MM.bmp', 0
+                        db '4MM.bmp', 0
+                        db '5MM.bmp', 0
+statsFile db "stats.txt", 0
+;FILE NAMES MUST BE 3 LETTERS LONG
+instructions db 'ins.bmp', 0
+winFile db '5MM.bmp',0
+loseFile db '4MM.bmp',0
+						
+
+eight db 8
+
+handle_file dw ?
+
+bmp_header db 54 dup (0) 
+
+color_palette db 256*4 dup (0) 
+
+Output_lines db 320 dup (0) ; 
+
+error_prompt db 'Error', 13, 10,'$'
+;================================
 
 ;----------bar's variables
 BarStruct struct
@@ -30,14 +57,17 @@ ballSize = 5
 BrickStruct struct
 	CoordX dw 0
 	CoordY dw 0
+	Color db 0
 	Health dw 1
 BrickStruct ends
 brickWidth = 20
 brickLength = 40
 bricksCount dw 0
-brick BrickStruct    <40,20>, <90,20>, <140,20>, <190,20>, <240,20>, 
-					 <40,50>, <90,50>, <140,50>, <190,50>, <240,50>,
-					 <40,80>, <90,80>, <140,80>, <190,80>, <240,80>
+
+brick BrickStruct    <40,20,9>, <90,20,10>, <140,20,11>, <190,20,12>, <240,20,13>, 
+					 <40,50,9>, <90,50,10>, <140,50,11>, <190,50,12>, <240,50,13>,
+					 <40,80,9>, <90,80,10>, <140,80,11>, <190,80,12>, <240,80,13>
+
 						
 ;------------ player
 PlayerStruct struct
@@ -56,7 +86,7 @@ livesMsg db "Lives: ",'$'
 levelMsg db "Level: ", '$'
 pauseMsg db "Game is paused.", 10,9, "  Press esc to resume.", '$' ;10 for linefeed, 9 for tab
 
-gameLevel dw 1
+gameLevel dw 0
 timeRemaining dw 0
 timeVar_1 db 0
 timeVar_2 db 0
@@ -65,9 +95,13 @@ windowsLength = 320
 statsVar dw 0
 count dw 0
 isGamePaused dw 0
+currentImage dw 0
+fileNameLength = 0
+statsHandle dw 0
+mode = 0
 
 .code
-;include img.inc
+
 ;------------- MACROs
 	makeBall MACRO
 		mov al, 0fh; white colour ball
@@ -193,6 +227,22 @@ isGamePaused dw 0
 		timeSkip:
 	ENDM
 
+	
+	
+	copyFileName MACRO
+	 ; ------ push the source string
+			mov bx, offset filename_main_menu 
+			mov ax, currentImage
+			mul eight
+			add bx, ax
+			push bx
+			; ------ push the destination string
+			mov bx, offset filename 
+			push bx
+			call copyString
+	ENDM
+	
+
 ;------- Attaching the data segment
 mov ax, @data
 mov ds, ax
@@ -202,15 +252,12 @@ mov ax, 0
 main proc
 	
 	setVideoMode
-	
-	call inputName
-	call drawBricks
+	call mainMenu
 	call game
 
 mov ah, 4ch
 int 21h
 main endp
-
 
 ;---------------------------------------------------------------------------------------------
 game PROC uses ax bx cx dx si di
@@ -226,6 +273,10 @@ gameLoop:
 		updateTime
 		call updateGameLevel
 	.endif
+	
+	;constantly checking if the player has either lost or won
+	call youLose
+	call youWin
 
 	;if 1/100 second hasnt passed, repeat loop
 	cmp dl, timeVar_1
@@ -255,8 +306,227 @@ gameLoop:
 	exitGame:
 ret
 game endp
+
+;--------------------- 
+youLose Proc uses ax bx cx dx si di
+	.if(player.Lives == 0) || (timeRemaining == 240)
+		;displaying losing screen
+			mov bx, offset loseFile
+			push bx
+			mov bx, offset filename
+			push bx
+			call copyString
+			call displayImage
+			;---- waiting for a key to be pressed
+			mov ah, 00
+			int 16h
+			;---- 
+		call mainMenu
+	; save stats
+	;
+	;
+	;
+	
+	.endif
+	
+ret
+youLose endp
+
+;---------------------
+youWin Proc uses ax bx cx dx si di
+	.if(gameLevel == 4) && (bricksCount == 15)
+		;displaying losing screen
+			mov bx, offset winFile
+			push bx
+			mov bx, offset filename
+			push bx
+			call copyString
+			call displayImage
+			;---- waiting for a key to be pressed
+			mov ah, 00
+			int 16h
+			;---- 
+		call mainMenu
+	; save stats
+	;
+	;
+	;
+	
+	.endif
+	
+ret
+youWin endp
+
+;------------------------------
+mainMenu proc uses bx
+    setVideoMode
+	mov currentImage, 0
+	copyFileName
+	call displayImage
+menuLoop:
+
+	mov ah, 1
+	int 16h
+	jnz menuLoop
+    ;getting keyboard input
+    mov ah, 0
+    int 16h
+
+	cmp ah, 50H
+	je downKey
+	cmp ah, 48H
+	je upKey
+	cmp ah, 28 
+	je enterKey
+	cmp ah, 1
+	je escapeKey
+	
+	jmp menuLoop
+	
+	downKey:
+		.if(currentImage != 4)
+			inc currentImage			
+			copyFileName
+			setVideoMode
+			call displayImage
+			mov ax, currentImage
+			mov statsVar, ax
+			call updateStats
+
+		.endif
+	jmp menuLoop 
+       
+    upKey:
+		.if(currentImage != 0)
+			dec currentImage
+			copyFileName
+			setVideoMode
+			call displayImage
+			mov ax, currentImage
+			mov statsVar, ax
+			call updateStats
+		.endif
+    jmp menuLoop 
+	
+	enterKey:
+	; new game
+	.if(currentImage == 0)	
+		setVideoMode
+		mov player.Lives, 3
+		mov player.Score, 0
+		mov gameLevel, 1
+		mov bricksCount, 0
+		mov isGamePaused, 0
+		
+		mov bar.CoordX, 130
+		mov bar.CoordY, 190
+		mov bar.Length_, 60
+		
+		mov ball.SpeedX, 5
+		mov ball.SpeedY, 5
+		
+		call resetBricks
+		mov timeRemaining, 0
+		
+		attachBallToBar
+		call inputName
+		call drawBricks
+		ret
+		
+	; resume game
+	.elseif (currentImage == 1)
+		.if(timeRemaining>0)
+		;call clearScreen
+		setVideoMode
+		call drawBricks
+		mov isGamePaused, 0
+		mov isBallLaunched, 1
+		ret
+		.endif
+		jmp menuLoop
+		
+	; instructions
+	.elseif (currentImage == 2)
+		mov bx, offset instructions
+		push bx
+		mov bx, offset filename
+		push bx
+		call copyString
+		call displayImage
+		;---- waiting for a key to be pressed
+		mov ah, 01
+		int 21h
+		;---- 
+		mov currentImage, 0
+		mov bx, offset filename_main_menu
+		push bx
+		mov bx, offset filename
+		push bx
+		call copyString
+		call displayImage
+		jmp menuLoop
+		
+	; exit game
+	.elseif (currentImage == 4)
+		setVideoMode
+		mov ah, 4ch
+		int 21h
+		ret
+	.endif
+    jmp menuLoop
+	
+	;resume the game
+	escapeKey:	
+		call clearScreen
+		setVideoMode
+		call drawBricks
+		mov isGamePaused, 0
+		mov isBallLaunched,  1
+		ret
+    jmp menuLoop
+	
+	
+	
+mainMenu endp
+;-----------
+copyString proc
+    pop si ; contains the return address
+    pop bx ; destination
+    pop di ; source
+    mov cx, 8 ; length of source
+
+    ; copies destination to source string
+    ; uses indirect addressing
+    copyingLoop: 
+        mov al, [di]
+        mov [bx], al
+
+        inc bx
+        inc di
+    Loop copyingLoop
+
+    push si
+ret
+copyString endp
+
+;------------------------------
+
+displayImage proc
+	mov dx, offset filename
+	call openFile
+    call getHeader
+    call getPalette
+    call copyPallete
+    call copyBitmapImage
+	call closeFile
+ret
+displayImage endp
+
+
 ;---------------------------------------------------
 updateGameLevel Proc uses si ax
+	
+	;this will run only when game level is changed
 	.if(bricksCount == 15) 
 		inc	gameLevel
 		mov bricksCount, 0
@@ -264,8 +534,8 @@ updateGameLevel Proc uses si ax
 		; Condition for game level 2
 		.if(gameLevel == 2)
 			sub bar.Length_, 20
-			;add ball.SpeedX, 3
-			add ball.SpeedY, 3
+			clearBar
+			call updateBallSpeed
 			mov si, 0
 			.while(si < (BrickStruct * 15))
 				mov brick[si].Health, 2
@@ -274,8 +544,7 @@ updateGameLevel Proc uses si ax
 			
 		; Conditions for game level 3
 		.else 
-			add ball.SpeedX, 3
-			;add ball.SpeedY, 3
+			call updateBallSpeed
 			mov si, 0
 			.while(si < (BrickStruct * 15))
 				mov brick[si].Health, 3
@@ -285,17 +554,63 @@ updateGameLevel Proc uses si ax
 		
 		; reverting the bricks to their original coordinates and displaying them
 		attachBallToBar
-		mov si, 0
-		.while(si < BrickStruct * 15)
-			neg brick[si].CoordX
-			neg brick[si].CoordY
-		add si, type BrickStruct
-		.endw
+		call resetBricks
 		call drawBricks
 		
 	.endif
 ret
 updateGameLevel endp
+;-----------
+updateBallSpeed proc 
+		cmp ball.SpeedX, 0
+		jl updateBallSpeedSkip_1
+		add ball.SpeedX, 3
+		updateBallSpeedSkip_1:
+		add ball.SpeedX, -3
+		
+		cmp ball.SpeedY, 0
+		jl updateBallSpeedSkip_2
+		add ball.SpeedY, 3
+		updateBallSpeedSkip_2:
+		add ball.SpeedY, -3
+ret
+updateBallSpeed endp
+;----------
+resetBricks proc uses si ax di
+	local columnsColorTracker:word
+	mov columnsColorTracker, 0
+	mov si, 0
+	mov al, 9
+		.while(si < BrickStruct * 15)	
+			;---------resetting color
+			mov brick[si].Color, al
+			.if(columnsColorTracker == 4)
+				mov columnsColorTracker, 0
+				mov al, 9
+			.else
+				inc columnsColorTracker
+				inc al
+			.endif
+			;----------------------
+			;resetting condition for bricks when a new game starts
+			.if(gameLevel == 1) ; 
+					mov brick[si].Health, 1
+					
+					cmp brick[si].CoordX, 0
+					jg resetBricksSkip
+						neg brick[si].CoordX
+						neg brick[si].CoordY
+					resetBricksSkip:
+			;resetting condition for the bricks when the game level changes
+			.else	
+				neg brick[si].CoordX 
+				neg brick[si].CoordY
+			.endif
+			
+		add si, type BrickStruct
+		.endw
+ret
+resetBricks endp
 ;--------------------------------------------------
 inputName proc uses ax bx cx dx
 
@@ -497,32 +812,29 @@ keyboardInput_Loop:
 	je leftKey
 	cmp ah, 4Dh; right key
 	je rightKey
-	cmp ah, 57 ;space key
+	cmp ah, 57 ; space key
 	je launchBall
-	cmp ah, 01
+	cmp ah, 01 ; escape key
 	je pauseGame
 	jmp keyboardInputExit
 	
 	
 	launchBall:
-	;if game is paused
-		.if(isGamePaused == 1)
-		jmp keyboardInputExit
-		.endif
-	;else
-	mov isBallLaunched, 1
+		;if game is paused
+			.if(isGamePaused == 1)
+			jmp keyboardInputExit
+			.endif
+		;else
+		mov isBallLaunched, 1
 	jmp keyboardInputExit
 	
 	pauseGame:
-	.if(isGamePaused == 0)
-	displayPauseMsg
-	mov isGamePaused, 1
-	mov isBallLaunched,  0
-	.else
-	call clearPausedMsg
-	mov isGamePaused, 0
-	mov isBallLaunched,  1
-	.endif
+		.if(isGamePaused == 0)
+			;displayPauseMsg
+			mov isGamePaused, 1
+			mov isBallLaunched,  0
+			call mainMenu
+		.endif
 	jmp keyboardInputExit
 
 
@@ -682,29 +994,22 @@ moveBall PROC uses ax
 	
 	youDied:
 	dec player.Lives
-	;neg ball.SpeedYs
 	attachBallToBar
 	ret
 	
 	
 moveBall endp
+
 ;---------------------------------------------------------------------------------------------
 drawBricks proc uses ax bx cx dx si di
-	local brickLoopVar:word, colorTracker:word
-	mov colorTracker, 0
+	local brickLoopVar:word
+
 	mov brickLoopVar, 20
 	mov bh, 0; page number
 	mov si, 0
-	mov al, 9
 brickLoop_1:
-	.if(colorTracker == 4)
-		mov colorTracker, 0
-		mov al, 9
-	.else
-		inc colorTracker
-		inc al
-	.endif
-	
+		
+		mov al, brick[si].Color
 		mov cx, brick[si].CoordX ;inital x
 		mov dx, brick[si].CoordY ;inital y
 		mov brickLoopVar, 20
@@ -774,6 +1079,7 @@ brickCollision proc uses ax bx cx dx di si
 		;changing the bricks coordinates so the ball wont collide with them once they've been broken
 		neg brick[si].CoordX
 		neg brick[si].CoordY
+		mov brick[si].Color, 0
 	.endif
 	
 	;generating beepsound
@@ -850,4 +1156,7 @@ updateStats Proc uses ax bx cx dx
 	Ex2:
 ret
 updateStats endp
+;------
+include img.inc
+;include fileHandling.inc
 end
